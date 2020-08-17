@@ -19,6 +19,10 @@ impl Default for GitHandler {
 
 impl GitHandler {
     pub fn create_repo(&self, repo_name: &str) -> Result<(), String> {
+        if self.repo_exists(&repo_name) {
+            return Ok(());
+        }
+
         // create the directory for the repository
         if !self.dir.is_dir() {
             fs::create_dir(&self.dir).map_err(|_| "Could not create the repo directory")?
@@ -26,13 +30,10 @@ impl GitHandler {
 
         let repo_path = Path::new(&self.dir).join(repo_name);
 
-        fs::create_dir(&repo_path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                "This repository already exists".into()
-            } else {
-                format!("An error occurred {:?}", e)
-            }
-        })?;
+        if !repo_path.is_dir() {
+            fs::create_dir(&repo_path).map_err(|e| format!("Error creating directory: {:?}", e))?;
+        }
+
         let status = Command::new(&self.git_path)
             .arg("init")
             .arg("--bare")
@@ -46,6 +47,10 @@ impl GitHandler {
         } else {
             Err("Error init repo: {}".into())
         }
+    }
+
+    pub fn get_info_refs(&self) -> Result<(), ()> {
+        todo!()
     }
 
     pub fn repo_exists(&self, repo_name: &str) -> bool {
@@ -74,6 +79,18 @@ impl HookScripts {
 
     fn write_hook_files(&self, repo_path: &Path) -> Result<(), String> {
         let dir = HookScripts::get_hook_dir(repo_path);
+
+        let _: Result<(), String> = match fs::create_dir(&dir) {
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+            Err(e) => {
+                return Err(format!(
+                    "The hooks directory does not exist, could not create: {:?}",
+                    e
+                ))
+            }
+            _ => Ok(()),
+        };
+
         let hook_scripts = [
             ("pre-receive", &self.pre_receive),
             ("update", &self.update),
@@ -92,14 +109,6 @@ impl HookScripts {
 
     fn get_hook_dir(repo_path: &Path) -> PathBuf {
         Path::new(repo_path).join(HookScripts::HOOKS_DIR_NAME)
-    }
-
-    fn create_hooks_dir(repo_path: &Path) -> Result<(), String> {
-        let dir = Path::new(repo_path).join(HookScripts::HOOKS_DIR_NAME);
-        match fs::create_dir(&dir) {
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-            _ => Ok(()),
-        }
     }
 }
 
@@ -132,6 +141,8 @@ mod test {
         assert!(!git_handler.repo_exists(repo_name));
         git_handler.create_repo(repo_name).unwrap();
         assert!(git_handler.repo_exists(repo_name));
+
+        cleanup(repo_path);
     }
 
     #[test]
@@ -159,11 +170,6 @@ mod test {
         let dir = Path::new(repo_path).join(HookScripts::HOOKS_DIR_NAME);
         assert_eq!(dir, HookScripts::get_hook_dir(repo_path));
         assert!(!dir.is_dir());
-
-        HookScripts::create_hooks_dir(repo_path).expect("Could not create hooks directory");
-        assert!(dir.is_dir());
-        // should ignore if directory already exists.
-        HookScripts::create_hooks_dir(repo_path).expect("Could not create hooks directory");
 
         // Check if the files are created
         let expected_hook_scripts = HookScripts {

@@ -1,13 +1,14 @@
-#[macro_use]
-extern crate rocket;
+use rocket::*;
 mod git_server;
 
 #[get("/")]
-fn index() -> &'static str {
-    "Welcome!"
+async fn hello() -> String {
+    "Hello, world!".into()
 }
 
 #[launch]
-fn rocket() -> rocket::Rocket {
-    rocket::ignite().mount("/", routes![index])
+fn launch() -> rocket::Rocket {
+    let mut routes = routes![hello];
+    routes.extend(git_server::routes::get_routes());
+    rocket::ignite().mount("/", routes)
 }
