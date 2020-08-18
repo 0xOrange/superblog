@@ -1,6 +1,46 @@
+use rocket::http::RawStr;
+use rocket::request::FromFormValue;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum GitRpc {
+    GitUploadPack,
+    GitReceivePack,
+}
+
+impl GitRpc {
+    const RECEIVE_PACK_RPC: &'static str = "git_receive_pack";
+    const UPLOAD_PACK_RPC: &'static str = "git_upload_pack";
+
+    pub fn from(rpc_string: &str) -> Option<GitRpc> {
+        match rpc_string {
+            GitRpc::RECEIVE_PACK_RPC => Some(GitRpc::GitReceivePack),
+            GitRpc::UPLOAD_PACK_RPC => Some(GitRpc::GitUploadPack),
+            _ => None,
+        }
+    }
+
+    pub fn value(&self) -> &'static str {
+        match &self {
+            GitRpc::GitReceivePack => GitRpc::RECEIVE_PACK_RPC,
+            GitRpc::GitUploadPack => GitRpc::UPLOAD_PACK_RPC,
+        }
+    }
+}
+
+impl<'v> FromFormValue<'v> for GitRpc {
+    type Error = &'v RawStr;
+
+    fn from_form_value(form_value: &'v RawStr) -> Result<Self, Self::Error> {
+        match form_value.as_str() {
+            "git-upload-pack" => Ok(GitRpc::GitUploadPack),
+            "git-receive-pack" => Ok(GitRpc::GitReceivePack),
+            _ => Err(form_value),
+        }
+    }
+}
 
 pub struct GitHandler {
     pub dir: PathBuf,
@@ -130,6 +170,33 @@ mod test {
 
     fn cleanup(repo_path: &str) {
         fs::remove_dir_all(repo_path).unwrap();
+    }
+
+    #[test]
+    fn git_rpc() {
+        let test: GitRpc = GitRpc::GitReceivePack;
+        let check = |v: &str, g: GitRpc| {
+            assert_eq!(GitRpc::from(v).unwrap(), GitRpc::GitReceivePack);
+            assert_eq!(g.value(), v);
+        };
+
+        match test {
+            GitRpc::GitReceivePack => {
+                check("git_receive_pack", GitRpc::GitReceivePack);
+            }
+            GitRpc::GitUploadPack => {
+                check("git-upload-pack", GitRpc::GitUploadPack);
+            }
+        };
+    }
+
+    #[test]
+    fn git_execute() {
+        let repo_path = "test3";
+        let gh = test_setup(repo_path);
+        let out = gh.execute("", &["--version"]).unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).contains("git version"));
+        assert!(out.status.success());
     }
 
     #[test]

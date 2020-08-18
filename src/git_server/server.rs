@@ -1,5 +1,7 @@
+use super::handler::GitRpc;
+
 pub mod git_server_routes {
-    use rocket::http::RawStr;
+    use super::GitRpc;
     use rocket::*;
 
     pub fn get_routes() -> Vec<Route> {
@@ -7,8 +9,9 @@ pub mod git_server_routes {
     }
 
     #[get("/info/refs?<service>")]
-    fn get_info_refs(service: &RawStr) -> String {
-        format!("Got request: {}", service)
+    fn get_info_refs(service: GitRpc) -> Option<String> {
+        println!("Service: {:?}", service);
+        Some(format!("Got request: {:?}", service))
     }
 
     #[post("/git-upload-pack")]

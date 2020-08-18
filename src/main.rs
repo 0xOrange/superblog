@@ -1,5 +1,5 @@
-use rocket::*;
 mod git_server;
+use rocket::*;
 
 #[get("/")]
 async fn hello() -> String {
