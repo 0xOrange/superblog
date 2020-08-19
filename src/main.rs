@@ -1,9 +1,10 @@
 mod git_server;
+
 use rocket::*;
 
 #[get("/")]
 async fn hello() -> String {
-    "Hello, world!".into()
+    "Hello, World!".into()
 }
 
 #[launch]

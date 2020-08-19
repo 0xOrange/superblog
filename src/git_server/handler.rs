@@ -2,7 +2,8 @@ use rocket::http::RawStr;
 use rocket::request::FromFormValue;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
+use tokio::process::Command;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum GitRpc {
@@ -11,8 +12,8 @@ pub enum GitRpc {
 }
 
 impl GitRpc {
-    const RECEIVE_PACK_RPC: &'static str = "git_receive_pack";
-    const UPLOAD_PACK_RPC: &'static str = "git_upload_pack";
+    pub const RECEIVE_PACK_RPC: &'static str = "git-receive-pack";
+    pub const UPLOAD_PACK_RPC: &'static str = "git-upload-pack";
 
     pub fn from(rpc_string: &str) -> Option<GitRpc> {
         match rpc_string {
@@ -35,8 +36,8 @@ impl<'v> FromFormValue<'v> for GitRpc {
 
     fn from_form_value(form_value: &'v RawStr) -> Result<Self, Self::Error> {
         match form_value.as_str() {
-            "git-upload-pack" => Ok(GitRpc::GitUploadPack),
-            "git-receive-pack" => Ok(GitRpc::GitReceivePack),
+            GitRpc::UPLOAD_PACK_RPC => Ok(GitRpc::GitUploadPack),
+            GitRpc::RECEIVE_PACK_RPC => Ok(GitRpc::GitReceivePack),
             _ => Err(form_value),
         }
     }
@@ -58,14 +59,14 @@ impl Default for GitHandler {
 }
 
 impl GitHandler {
-    pub fn create_repo(&self, repo_name: &str) -> Result<(), String> {
+    pub async fn create_repo(&self, repo_name: &str) -> Result<(), String> {
         if self.repo_exists(&repo_name) {
             return Ok(());
         }
 
         // create the directory for the repository
         if !self.dir.is_dir() {
-            fs::create_dir(&self.dir).map_err(|_| "Could not create the repo directory")?
+            fs::create_dir_all(&self.dir).map_err(|_| "Could not create the repo directory")?
         }
 
         let repo_path = Path::new(&self.dir).join(repo_name);
@@ -79,6 +80,7 @@ impl GitHandler {
             .arg("--bare")
             .current_dir(&repo_path)
             .status()
+            .await
             .expect("failed to init repo");
         println!("git init exit status: {}", status);
         if status.success() {
@@ -89,8 +91,24 @@ impl GitHandler {
         }
     }
 
-    pub fn get_info_refs(&self) -> Result<(), ()> {
-        todo!()
+    pub async fn get_info_refs(
+        &self,
+        git_rpc: &GitRpc,
+        repo_path: &str,
+    ) -> std::io::Result<Output> {
+        self.execute(
+            git_rpc.value(),
+            &["--stateless-rpc", "--advertise-refs", repo_path],
+        )
+        .await
+    }
+
+    async fn execute(&self, name: &str, args: &[&str]) -> std::io::Result<Output> {
+        Command::new(&self.git_path)
+            .arg(name)
+            .args(args)
+            .output()
+            .await
     }
 
     pub fn repo_exists(&self, repo_name: &str) -> bool {
@@ -182,7 +200,7 @@ mod test {
 
         match test {
             GitRpc::GitReceivePack => {
-                check("git_receive_pack", GitRpc::GitReceivePack);
+                check("git-receive-pack", GitRpc::GitReceivePack);
             }
             GitRpc::GitUploadPack => {
                 check("git-upload-pack", GitRpc::GitUploadPack);
@@ -190,35 +208,36 @@ mod test {
         };
     }
 
-    #[test]
-    fn git_execute() {
+    #[tokio::test]
+    async fn git_execute() {
         let repo_path = "test3";
         let gh = test_setup(repo_path);
-        let out = gh.execute("", &["--version"]).unwrap();
-        assert!(String::from_utf8_lossy(&out.stdout).contains("git version"));
+        let out = gh.execute("help", &["-g"]).await.unwrap();
+        println!("{}", String::from_utf8_lossy(&out.stdout));
+        assert!(String::from_utf8_lossy(&out.stdout).contains("The common Git guides are:"));
         assert!(out.status.success());
     }
 
-    #[test]
-    fn repo_exists() {
+    #[tokio::test]
+    async fn repo_exists() {
         let repo_path = "test1";
         let repo_name = "repo1";
         let git_handler = test_setup(repo_path);
 
         assert!(!git_handler.repo_exists(repo_name));
-        git_handler.create_repo(repo_name).unwrap();
+        git_handler.create_repo(repo_name).await.unwrap();
         assert!(git_handler.repo_exists(repo_name));
 
         cleanup(repo_path);
     }
 
-    #[test]
-    fn init_repo() -> Result<(), String> {
-        let repo_path = "test2";
+    #[tokio::test]
+    async fn init_repo() -> Result<(), String> {
+        let repo_path = "repo/test2";
         let repo_name = "repo1";
         let git_handler = test_setup(repo_path);
 
-        git_handler.create_repo(repo_name)?;
+        git_handler.create_repo(repo_name).await?;
         assert!(Path::new(repo_path).join(repo_name).join("HEAD").is_file());
 
         cleanup(repo_path);
