@@ -1,3 +1,4 @@
+mod gzip;
 mod handler;
 mod server;
 

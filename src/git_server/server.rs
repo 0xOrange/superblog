@@ -1,4 +1,6 @@
+use super::gzip;
 use super::handler;
+
 use rocket::request::Request;
 use rocket::response::{self, Responder, Response};
 use std::io::Cursor;
@@ -35,6 +37,7 @@ impl<'r> Responder<'r, 'static> for GitOutput {
 }
 
 pub mod git_server_routes {
+    use super::gzip::MaybeGzip;
     use super::handler;
     use rocket::data::{Data, ToByteUnit};
     use rocket::*;
@@ -77,10 +80,7 @@ pub mod git_server_routes {
     }
 
     #[post("/git-receive-pack", data = "<content>")]
-    async fn receive_pack(content: Data) -> Option<String> {
-        let c = content.open(2u8.mebibytes()).stream_to_string().await;
-
-        println!("Got content: {:?}", c);
+    async fn receive_pack(content: MaybeGzip) -> Option<String> {
         Some("TODO".into())
     }
 }
