@@ -29,6 +29,11 @@ impl GitRpc {
             GitRpc::GitUploadPack => GitRpc::UPLOAD_PACK_RPC,
         }
     }
+
+    pub fn sub_command(&self) -> Result<&str, String> {
+        let s = &self.value().splitn(2, '-');
+        s.clone().nth(1).ok_or("Invalid command".into())
+    }
 }
 
 impl<'v> FromFormValue<'v> for GitRpc {
@@ -69,7 +74,7 @@ impl GitHandler {
             fs::create_dir_all(&self.dir).map_err(|_| "Could not create the repo directory")?
         }
 
-        let repo_path = Path::new(&self.dir).join(repo_name);
+        let repo_path = Path::new(&self.dir);
 
         if !repo_path.is_dir() {
             fs::create_dir(&repo_path).map_err(|e| format!("Error creating directory: {:?}", e))?;
@@ -78,7 +83,7 @@ impl GitHandler {
         let status = Command::new(&self.git_path)
             .arg("init")
             .arg("--bare")
-            .current_dir(&repo_path)
+            .arg(&repo_path.join(repo_name))
             .status()
             .await
             .expect("failed to init repo");
@@ -91,22 +96,25 @@ impl GitHandler {
         }
     }
 
-    pub async fn get_info_refs(
-        &self,
-        git_rpc: &GitRpc,
-        repo_path: &str,
-    ) -> std::io::Result<Output> {
+    pub async fn get_info_refs(&self, git_rpc: &GitRpc, repo_name: &str) -> Result<Output, String> {
         self.execute(
-            git_rpc.value(),
-            &["--stateless-rpc", "--advertise-refs", repo_path],
+            git_rpc.sub_command()?,
+            &["--stateless-rpc", "--advertise-refs", repo_name],
         )
         .await
+        .map_err(|e| format!("Error: {:?}", e))
+    }
+
+    pub async fn git_rpc(&self, git_rpc: &GitRpc, repo_path: &str) {
+        todo!()
     }
 
     async fn execute(&self, name: &str, args: &[&str]) -> std::io::Result<Output> {
+        let repo_path = Path::new(&self.dir);
         Command::new(&self.git_path)
             .arg(name)
             .args(args)
+            .current_dir(repo_path)
             .output()
             .await
     }
@@ -192,30 +200,39 @@ mod test {
 
     #[test]
     fn git_rpc() {
-        let test: GitRpc = GitRpc::GitReceivePack;
-        let check = |v: &str, g: GitRpc| {
-            assert_eq!(GitRpc::from(v).unwrap(), GitRpc::GitReceivePack);
+        use GitRpc::*;
+        let test: [GitRpc; 2] = [GitReceivePack, GitUploadPack];
+        let check = |v: &str, g: &GitRpc| {
+            assert_eq!(GitRpc::from(v).unwrap(), *g);
             assert_eq!(g.value(), v);
         };
 
-        match test {
-            GitRpc::GitReceivePack => {
-                check("git-receive-pack", GitRpc::GitReceivePack);
-            }
-            GitRpc::GitUploadPack => {
-                check("git-upload-pack", GitRpc::GitUploadPack);
-            }
-        };
+        for test_item in test.iter() {
+            match test_item {
+                GitReceivePack => {
+                    check("git-receive-pack", &test_item);
+                    assert_eq!(test_item.sub_command().unwrap(), "receive-pack");
+                }
+                GitUploadPack => {
+                    check("git-upload-pack", &test_item);
+                    assert_eq!(test_item.sub_command().unwrap(), "upload-pack");
+                }
+            };
+        }
     }
 
     #[tokio::test]
     async fn git_execute() {
         let repo_path = "test3";
+        let repo_name = "repo1";
         let gh = test_setup(repo_path);
+        gh.create_repo(repo_name).await.unwrap();
         let out = gh.execute("help", &["-g"]).await.unwrap();
         println!("{}", String::from_utf8_lossy(&out.stdout));
         assert!(String::from_utf8_lossy(&out.stdout).contains("The common Git guides are:"));
         assert!(out.status.success());
+
+        cleanup(repo_path);
     }
 
     #[tokio::test]
